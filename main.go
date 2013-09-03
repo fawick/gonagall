@@ -88,34 +88,30 @@ func BrowseDirectory(w http.ResponseWriter, r *http.Request) {
 	//http.ServeFile(w, r, gonagallConfig.BaseDir+upath)
 }
 
-func ServeThumb(w http.ResponseWriter, r *http.Request) {
-	l := len("/thumb/")
-	s := gonagallConfig.BaseDir + "/" + r.URL.Path[l:]
-	fmt.Println("Trying to serve ", s)
-	fImg1, _ := os.Open(s)
+func serveResizedImage(w http.ResponseWriter, path string, maxDim uint) {
+	fullPath := gonagallConfig.BaseDir + "/" + path
+	hashPath := gonagallConfig.TempDir + "/" + fullPath
+
+	fmt.Println("Starting to serve", fullPath, "with width", maxDim)
+	fImg1, _ := os.Open(fullPath)
 	img1, _ := jpeg.Decode(fImg1)
 	fImg1.Close()
-	fmt.Println("decoded", r.URL.Path)
+	fmt.Println("decoded", fullPath)
 
-	img2 := resize.Resize(100, 0, img1, resize.NearestNeighbor)
-
+	img2 := resize.Resize(maxDim, 0, img1, resize.NearestNeighbor)
 	jpeg.Encode(w, img2, nil)
-	fmt.Println("encoded", r.URL.Path, r.URL.Path[l:])
+	// TODO caching
+	fmt.Println("encoded", fullPath, "to", hashPath)
+}
+
+func ServeThumb(w http.ResponseWriter, r *http.Request) {
+	l := len("/thumb/")
+	serveResizedImage(w, r.URL.Path[l:], 100)
 }
 
 func ServeSmall(w http.ResponseWriter, r *http.Request) {
 	l := len("/view/")
-	s := gonagallConfig.BaseDir + "/" + r.URL.Path[l:]
-	fmt.Println("Trying to serve ", s)
-	fImg1, _ := os.Open(s)
-	img1, _ := jpeg.Decode(fImg1)
-	fImg1.Close()
-	fmt.Println("decoded", r.URL.Path)
-
-	img2 := resize.Resize(480, 0, img1, resize.NearestNeighbor)
-
-	jpeg.Encode(w, img2, nil)
-	fmt.Println("encoded", r.URL.Path, r.URL.Path[l:])
+	serveResizedImage(w, r.URL.Path[l:], 480)
 }
 
 func main() {

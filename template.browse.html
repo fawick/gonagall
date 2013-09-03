@@ -1,0 +1,15 @@
+<html>
+	<head>
+	</head>
+	<body>
+		<h1>Gallery</h1>
+		<h2>Pictures</h2>
+		<p>
+		{{range .Jpgs}} <a href="/view/{{.}}"><img src="/thumb/{{.}}"/></a> {{end}}
+		</p>
+		<h2>Sub-Galleries</h2>
+		<p>
+		{{range .Subs}} <a href="{{.}}">{{.}}</a> <br />{{end}}
+		</p>
+	</body>
+</html>

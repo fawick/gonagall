@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha1"
 	"encoding/json"
 	"fmt"
 	"github.com/nfnt/resize"
@@ -16,8 +17,8 @@ import (
 const gonagallConfigFile = "gonagallconfig.json"
 
 var gonagallConfig struct {
-	BaseDir string
-	TempDir string
+	BaseDir  string
+	CacheDir string
 }
 
 func writeConfig() error {
@@ -39,7 +40,7 @@ func readConfig() error {
 	s, _ := os.Getwd()
 	fmt.Println("pwd", s)
 	gonagallConfig.BaseDir = "."
-	gonagallConfig.TempDir = "/tmp"
+	gonagallConfig.CacheDir = "/tmp"
 	inFile, err := os.Open(gonagallConfigFile)
 	if err != nil {
 		fmt.Println("Error in readConfig:", err)
@@ -64,12 +65,12 @@ func BrowseDirectory(w http.ResponseWriter, r *http.Request) {
 	upath := r.URL.Path[l:]
 	t, err := template.ParseFiles("template.browse.html")
 	if err != nil {
-		fmt.Fprintln(w, "1", err)
+		http.Error(w, err.Error(), 500)
 		return
 	}
 	entries, err := ioutil.ReadDir(gonagallConfig.BaseDir + "/" + upath)
 	if err != nil {
-		fmt.Fprintln(w, "2", err, gonagallConfig.BaseDir+"/"+upath)
+		http.Error(w, err.Error(), 500)
 		return
 	}
 	var d dummy
@@ -82,26 +83,59 @@ func BrowseDirectory(w http.ResponseWriter, r *http.Request) {
 	}
 	err = t.Execute(w, d)
 	if err != nil {
-		fmt.Fprintln(w, "3", err)
+		http.Error(w, err.Error(), 500)
 		return
 	}
-	//http.ServeFile(w, r, gonagallConfig.BaseDir+upath)
 }
 
 func serveResizedImage(w http.ResponseWriter, path string, maxDim uint) {
 	fullPath := gonagallConfig.BaseDir + "/" + path
-	hashPath := gonagallConfig.TempDir + "/" + fullPath
+	h := sha1.New()
+	if _, err := h.Write([]byte(gonagallConfig.CacheDir + "/" + fullPath + fmt.Sprint(maxDim))); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	hashPath := gonagallConfig.CacheDir + "/" + fmt.Sprintf("%x.jpg", h.Sum(nil))
 
-	fmt.Println("Starting to serve", fullPath, "with width", maxDim)
-	fImg1, _ := os.Open(fullPath)
-	img1, _ := jpeg.Decode(fImg1)
-	fImg1.Close()
+	fmt.Println("Starting to serve", fullPath, "with width", maxDim, "==> hashPath")
+
+	if _, err := os.Stat(hashPath); err == nil {
+		fmt.Println("Serving existing resized file:", fullPath, "with width", maxDim, "==> hashPath")
+		b, err := ioutil.ReadFile(hashPath)
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		w.Write(b)
+		return
+	} else if !os.IsNotExist(err) {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+
+	origFile, _ := os.Open(fullPath)
+	origImage, _ := jpeg.Decode(origFile)
+	origFileStat, _ := origFile.Stat()
+	origFile.Close()
+
 	fmt.Println("decoded", fullPath)
 
-	img2 := resize.Resize(maxDim, 0, img1, resize.NearestNeighbor)
-	jpeg.Encode(w, img2, nil)
-	// TODO caching
-	fmt.Println("encoded", fullPath, "to", hashPath)
+	resized := resize.Resize(maxDim, 0, origImage, resize.NearestNeighbor)
+	b := new(bytes.Buffer)
+	jpeg.Encode(b, resized, nil)
+	ratio := float64(b.Len()) / float64(origFileStat.Size()) * 100.0
+	fmt.Println("re-encoded", fullPath, "to", hashPath, "size=", b.Len(), ratio)
+	w.Write(b.Bytes())
+
+	// cache the contents
+	cacheFile, err := os.Create(hashPath)
+	defer cacheFile.Close()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println("caching", fullPath, "to", hashPath, "size=", b.Len(), ratio)
+	b.WriteTo(cacheFile)
 }
 
 func ServeThumb(w http.ResponseWriter, r *http.Request) {

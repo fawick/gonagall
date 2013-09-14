@@ -1,15 +1,20 @@
 <html>
 	<head>
+	 	<script src="https://ajax.googleapis.com/ajax/libs/angularjs/1.1.5/angular.min.js" ></script>	
 	</head>
 	<body>
 		<h1>Gallery</h1>
 		<h2>Pictures</h2>
-		<p>
-		{{range .Jpgs}} <a href="/view/{{.}}"><img src="/thumb/{{.}}"/></a> {{end}}
-		</p>
+		{{range .JpgFiles}} <div class="thumb"> 
+				<a href="/view/{{$.Path}}/{{.}}">
+					<img src="/thumb/{{$.Path}}/{{.}}"/> <br />
+					{{.}}
+				</a>
+		</div> 
+		{{end}}
 		<h2>Sub-Galleries</h2>
-		<p>
-		{{range .Subs}} <a href="{{.}}">{{.}}</a> <br />{{end}}
-		</p>
+		<div class="subdirList">
+			{{range .SubDirs}} <a href="/gallery{{$.Path}}/{{.}}">{{.}}</a> <br />{{end}}
+		</div>
 	</body>
 </html>

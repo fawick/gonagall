@@ -5,8 +5,10 @@ import (
 	"crypto/sha1"
 	"encoding/json"
 	"fmt"
+	"github.com/gorilla/mux"
 	"github.com/nfnt/resize"
 	"html/template"
+	"image"
 	"image/jpeg"
 	"io/ioutil"
 	"net/http"
@@ -17,8 +19,10 @@ import (
 const gonagallConfigFile = "gonagallconfig.json"
 
 var gonagallConfig struct {
-	BaseDir  string
-	CacheDir string
+	BaseDir   string
+	CacheDir  string
+	ThumbSize uint
+	ViewSize  uint
 }
 
 func writeConfig() error {
@@ -41,6 +45,8 @@ func readConfig() error {
 	fmt.Println("pwd", s)
 	gonagallConfig.BaseDir = "."
 	gonagallConfig.CacheDir = "/tmp"
+	gonagallConfig.ThumbSize = 100
+	gonagallConfig.ViewSize = 480
 	inFile, err := os.Open(gonagallConfigFile)
 	if err != nil {
 		fmt.Println("Error in readConfig:", err)
@@ -55,32 +61,44 @@ func readConfig() error {
 	return writeConfig()
 }
 
-type dummy struct {
-	Subs []string
-	Jpgs []string
+type dirContents struct {
+	Path     string
+	SubDirs  []string
+	JpgFiles []string
+}
+
+func scanDir(path string) (d dirContents, err error) {
+	entries, err := ioutil.ReadDir(gonagallConfig.BaseDir + "/" + path)
+	if err != nil {
+		return
+	}
+	for _, r := range entries {
+		n := strings.ToUpper(r.Name())
+		if r.IsDir() {
+			if !strings.HasPrefix(n, ".") {
+				d.SubDirs = append(d.SubDirs, r.Name())
+			}
+		} else if strings.HasSuffix(n, ".JPG") || strings.HasSuffix(n, ".JPEG") {
+			d.JpgFiles = append(d.JpgFiles, r.Name())
+		}
+	}
+	d.Path = path
+	return
 }
 
 func BrowseDirectory(w http.ResponseWriter, r *http.Request) {
-	l := len("/")
-	upath := r.URL.Path[l:]
+	upath := mux.Vars(r)["directory"]
 	t, err := template.ParseFiles("template.browse.html")
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	entries, err := ioutil.ReadDir(gonagallConfig.BaseDir + "/" + upath)
+	d, err := scanDir(upath)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	var d dummy
-	for _, r := range entries {
-		if r.IsDir() && !strings.HasPrefix(r.Name(), ".") {
-			d.Subs = append(d.Subs, upath+"/"+r.Name())
-		} else if !r.IsDir() && strings.HasSuffix(r.Name(), ".jpg") {
-			d.Jpgs = append(d.Jpgs, upath+"/"+r.Name())
-		}
-	}
+
 	err = t.Execute(w, d)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
@@ -97,7 +115,7 @@ func serveResizedImage(w http.ResponseWriter, path string, maxDim uint) {
 	}
 	hashPath := gonagallConfig.CacheDir + "/" + fmt.Sprintf("%x.jpg", h.Sum(nil))
 
-	fmt.Println("Starting to serve", fullPath, "with width", maxDim, "==> hashPath")
+	fmt.Println("Starting to serve", fullPath, "with width", maxDim, "==>", hashPath)
 
 	if _, err := os.Stat(hashPath); err == nil {
 		fmt.Println("Serving existing resized file:", fullPath, "with width", maxDim, "==> hashPath")
@@ -120,7 +138,13 @@ func serveResizedImage(w http.ResponseWriter, path string, maxDim uint) {
 
 	fmt.Println("decoded", fullPath)
 
-	resized := resize.Resize(maxDim, 0, origImage, resize.NearestNeighbor)
+	var resized image.Image
+	p := origImage.Bounds().Size()
+	if p.X > p.Y {
+		resized = resize.Resize(maxDim, 0, origImage, resize.NearestNeighbor)
+	} else {
+		resized = resize.Resize(0, maxDim, origImage, resize.NearestNeighbor)
+	}
 	b := new(bytes.Buffer)
 	jpeg.Encode(b, resized, nil)
 	ratio := float64(b.Len()) / float64(origFileStat.Size()) * 100.0
@@ -134,26 +158,75 @@ func serveResizedImage(w http.ResponseWriter, path string, maxDim uint) {
 		fmt.Println(err)
 		return
 	}
-	fmt.Println("caching", fullPath, "to", hashPath, "size=", b.Len(), ratio)
 	b.WriteTo(cacheFile)
 }
 
+func relativePath(r *http.Request) string {
+	m := mux.Vars(r)
+	var s string
+	if d, ok := m["directory"]; ok {
+		s += d + "/"
+	}
+	s += m["imagefile"]
+	return s
+}
+
 func ServeThumb(w http.ResponseWriter, r *http.Request) {
-	l := len("/thumb/")
-	serveResizedImage(w, r.URL.Path[l:], 100)
+	p := relativePath(r)
+	fmt.Println("THUMB", p)
+	serveResizedImage(w, p, gonagallConfig.ThumbSize)
 }
 
 func ServeSmall(w http.ResponseWriter, r *http.Request) {
-	l := len("/view/")
-	serveResizedImage(w, r.URL.Path[l:], 480)
+	p := relativePath(r)
+	fmt.Println("SMALL", p)
+	serveResizedImage(w, p, gonagallConfig.ViewSize)
+}
+
+func ServeFull(w http.ResponseWriter, r *http.Request) {
+	l := len("/original/")
+	fmt.Println(gonagallConfig.BaseDir + "/" + r.URL.Path[l:])
+	http.ServeFile(w, r, gonagallConfig.BaseDir+"/"+r.URL.Path[l:])
+}
+
+func ViewImage(w http.ResponseWriter, r *http.Request) {
+	t, err := template.ParseFiles("template.view.html")
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	var d struct {
+		Path, File string
+	}
+	m := mux.Vars(r)
+	d.Path = m["directory"]
+	d.File = m["imagefile"]
+
+	err = t.Execute(w, d)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+}
+
+func imageSubrouters(r *mux.Route, f func(http.ResponseWriter, *http.Request)) {
+	s := r.Subrouter()
+	s.HandleFunc("/{imagefile}", f)
+	s.HandleFunc("/{directory:[A-Za-z0-9/\\-_ ]+}/{imagefile}", f)
 }
 
 func main() {
 	readConfig()
-	fmt.Println(gonagallConfig)
-	http.HandleFunc("/", BrowseDirectory)
-	http.HandleFunc("/thumb/", ServeThumb)
-	http.HandleFunc("/view/", ServeSmall)
-	//	http.HandleFunc("/original/", ServeOriginal)
+	r := mux.NewRouter()
+	imageSubrouters(r.PathPrefix("/thumb"), ServeThumb)
+	imageSubrouters(r.PathPrefix("/small"), ServeSmall)
+	imageSubrouters(r.PathPrefix("/original"), ServeFull)
+	imageSubrouters(r.PathPrefix("/view"), ViewImage)
+
+	r.Path("/gallery").HandlerFunc(BrowseDirectory)
+	r.Path("/gallery/{directory}").HandlerFunc(BrowseDirectory)
+
+	r.NotFoundHandler = http.RedirectHandler("/gallery", 301)
+	http.Handle("/", r)
 	http.ListenAndServe(":8781", nil)
 }

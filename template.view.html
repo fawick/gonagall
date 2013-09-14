@@ -3,18 +3,14 @@
 	 	<script src="https://ajax.googleapis.com/ajax/libs/angularjs/1.1.5/angular.min.js" ></script>	
 	</head>
 	<body>
-		<h1>Gallery</h1>
-		<h2>Pictures</h2>
-		{{range .JpgFiles}} <div class="thumb"> 
-				<a href="/view/{{$.Path}}/{{.}}">
-					<img src="/thumb/{{$.Path}}/{{.}}"/> <br />
-					{{.}}
-				</a>
+		<h1>{{.File}}</h1>
+		<div class="view"> 
+			<a href="/original/{{.Path}}/{{.File}}">
+				<img src="/small/{{.Path}}/{{.File}}"/> <br />
+			</a>
 		</div> 
-		{{end}}
-		<h2>Sub-Galleries</h2>
-		<div class="subdirList">
-			{{range .SubDirs}} <a href="{{$.Path}}/{{.}}">{{.}}</a> <br />{{end}}
-		</div>
+		<div class="navigation">
+		<a href="/gallery/{{.Path}}">Back to Gallery</a>
+	</div>
 	</body>
 </html>

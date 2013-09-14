@@ -23,6 +23,7 @@ var gonagallConfig struct {
 	CacheDir  string
 	ThumbSize uint
 	ViewSize  uint
+	CatchAll  bool
 }
 
 func writeConfig() error {
@@ -139,12 +140,12 @@ func serveResizedImage(w http.ResponseWriter, path string, maxDim uint) {
 	fmt.Println("decoded", fullPath)
 
 	var resized image.Image
-	p := origImage.Bounds().Size()
-	if p.X > p.Y {
-		resized = resize.Resize(maxDim, 0, origImage, resize.NearestNeighbor)
-	} else {
-		resized = resize.Resize(0, maxDim, origImage, resize.NearestNeighbor)
-	}
+	//p := origImage.Bounds().Size()
+	//if p.X > p.Y {
+	//	resized = resize.Resize(maxDim, 0, origImage, resize.NearestNeighbor)
+	//} else {
+	resized = resize.Resize(0, maxDim, origImage, resize.NearestNeighbor)
+	//}
 	b := new(bytes.Buffer)
 	jpeg.Encode(b, resized, nil)
 	ratio := float64(b.Len()) / float64(origFileStat.Size()) * 100.0
@@ -173,20 +174,17 @@ func relativePath(r *http.Request) string {
 
 func ServeThumb(w http.ResponseWriter, r *http.Request) {
 	p := relativePath(r)
-	fmt.Println("THUMB", p)
 	serveResizedImage(w, p, gonagallConfig.ThumbSize)
 }
 
 func ServeSmall(w http.ResponseWriter, r *http.Request) {
 	p := relativePath(r)
-	fmt.Println("SMALL", p)
 	serveResizedImage(w, p, gonagallConfig.ViewSize)
 }
 
 func ServeFull(w http.ResponseWriter, r *http.Request) {
-	l := len("/original/")
-	fmt.Println(gonagallConfig.BaseDir + "/" + r.URL.Path[l:])
-	http.ServeFile(w, r, gonagallConfig.BaseDir+"/"+r.URL.Path[l:])
+	p := relativePath(r)
+	http.ServeFile(w, r, gonagallConfig.BaseDir+"/"+p)
 }
 
 func ViewImage(w http.ResponseWriter, r *http.Request) {
@@ -217,16 +215,20 @@ func imageSubrouters(r *mux.Route, f func(http.ResponseWriter, *http.Request)) {
 
 func main() {
 	readConfig()
+	os.Mkdir(gonagallConfig.CacheDir, os.ModePerm)
 	r := mux.NewRouter()
 	imageSubrouters(r.PathPrefix("/thumb"), ServeThumb)
 	imageSubrouters(r.PathPrefix("/small"), ServeSmall)
 	imageSubrouters(r.PathPrefix("/original"), ServeFull)
 	imageSubrouters(r.PathPrefix("/view"), ViewImage)
 
-	r.Path("/gallery").HandlerFunc(BrowseDirectory)
-	r.Path("/gallery/{directory}").HandlerFunc(BrowseDirectory)
+	r.Path("/gallery/{directory:[A-Za-z0-9/\\-_ ]*}").HandlerFunc(BrowseDirectory)
 
-	r.NotFoundHandler = http.RedirectHandler("/gallery", 301)
+	r.PathPrefix("/static").Handler(http.StripPrefix("/static", http.FileServer(http.Dir("static"))))
+
+	if gonagallConfig.CatchAll {
+		r.NotFoundHandler = http.RedirectHandler("/gallery", 301)
+	}
 	http.Handle("/", r)
 	http.ListenAndServe(":8781", nil)
 }

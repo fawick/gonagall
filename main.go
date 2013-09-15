@@ -140,12 +140,12 @@ func serveResizedImage(w http.ResponseWriter, path string, maxDim uint) {
 	fmt.Println("decoded", fullPath)
 
 	var resized image.Image
-	//p := origImage.Bounds().Size()
-	//if p.X > p.Y {
-	//	resized = resize.Resize(maxDim, 0, origImage, resize.NearestNeighbor)
-	//} else {
-	resized = resize.Resize(0, maxDim, origImage, resize.NearestNeighbor)
-	//}
+	p := origImage.Bounds().Size()
+	if p.X > p.Y {
+		resized = resize.Resize(maxDim, 0, origImage, resize.NearestNeighbor)
+	} else {
+		resized = resize.Resize(0, maxDim, origImage, resize.NearestNeighbor)
+	}
 	b := new(bytes.Buffer)
 	jpeg.Encode(b, resized, nil)
 	ratio := float64(b.Len()) / float64(origFileStat.Size()) * 100.0
@@ -207,10 +207,14 @@ func ViewImage(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func Fallback(w http.ResponseWriter, r *http.Request) {
+	fmt.Println("FALLBACK: ", r.URL)
+}
+
 func imageSubrouters(r *mux.Route, f func(http.ResponseWriter, *http.Request)) {
 	s := r.Subrouter()
 	s.HandleFunc("/{imagefile}", f)
-	s.HandleFunc("/{directory:[A-Za-z0-9/\\-_ ]+}/{imagefile}", f)
+	s.HandleFunc("/{directory:[A-Za-z0-9/\\-_\\., ]+}/{imagefile}", f)
 }
 
 func main() {
@@ -222,12 +226,12 @@ func main() {
 	imageSubrouters(r.PathPrefix("/original"), ServeFull)
 	imageSubrouters(r.PathPrefix("/view"), ViewImage)
 
-	r.Path("/gallery/{directory:[A-Za-z0-9/\\-_ ]*}").HandlerFunc(BrowseDirectory)
+	r.Path("/gallery/{directory:.*}").HandlerFunc(BrowseDirectory)
 
 	r.PathPrefix("/static").Handler(http.StripPrefix("/static", http.FileServer(http.Dir("static"))))
 
 	if gonagallConfig.CatchAll {
-		r.NotFoundHandler = http.RedirectHandler("/gallery", 301)
+		r.NotFoundHandler = http.RedirectHandler("/gallery/", 301)
 	}
 	http.Handle("/", r)
 	http.ListenAndServe(":8781", nil)

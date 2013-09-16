@@ -5,7 +5,12 @@
 		<link rel="stylesheet" href="/static/css/demo.css">
 	</head>
 	<body>
-		<h1>Gallery</h1>
+		<div id="breadcrumb">
+			<a href="/gallery/">Gallery</a>
+			{{range .Breadcrumbs}}
+			&gt;&gt; <a href="/gallery/{{.Link}}">{{.Text}}</a>
+			{{end}}
+		</div>
 		<!-- The Gallery as lightbox dialog, should be a child element of the document body -->
 		<div id="blueimp-gallery" class="blueimp-gallery blueimp-gallery-controls">
 			<div class="slides"></div>
@@ -17,14 +22,19 @@
 			<ol class="indicator"></ol>
 		</div>
 
-		<h2>Pictures</h2>
+		{{if .ImageFiles}}
+		<h1>Pictures</h1>
 		<div id="links"> 
-			{{range .JpgFiles}}<a href="/small/{{$.Path}}/{{.}}"><img src="/thumb/{{$.Path}}/{{.}}" alt="{{.}}"/></a>{{end}}
+			{{range .ImageFiles}}<a href="/small/{{$.Path}}/{{.}}"><img src="/thumb/{{$.Path}}/{{.}}" alt="{{.}}"/></a>{{end}}
 		</div> 
-		<h2>Sub-Galleries</h2>
+		{{end}}
+
+		{{if .SubDirs}}
+		<h1>Sub-Galleries</h1>
 		<div class="subdirList">
 			{{range .SubDirs}} <a href="/gallery/{{$.Path}}/{{.}}">{{.}}</a> <br />{{end}}
 		</div>
+		{{end}}
 		<script src="/static/js/blueimp-gallery.min.js"></script>
 		<script>
 			document.getElementById('links').onclick = function (event) {

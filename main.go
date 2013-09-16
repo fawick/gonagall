@@ -6,13 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/gorilla/mux"
-	"github.com/nfnt/resize"
 	"html/template"
-	"image"
-	"image/jpeg"
 	"io/ioutil"
 	"net/http"
 	"os"
+	"os/exec"
 	"strings"
 )
 
@@ -63,9 +61,27 @@ func readConfig() error {
 }
 
 type dirContents struct {
-	Path     string
-	SubDirs  []string
-	JpgFiles []string
+	Path       string
+	SubDirs    []string
+	ImageFiles []string
+}
+
+type breadCrumb struct {
+	Text string
+	Link string
+}
+
+func (d dirContents) Breadcrumbs() []breadCrumb {
+	var v []breadCrumb
+	var l string
+	for _, s := range strings.Split(d.Path, "/") {
+		if s == "" {
+			continue
+		}
+		l += "/" + s
+		v = append(v, breadCrumb{s, l})
+	}
+	return v
 }
 
 func scanDir(path string) (d dirContents, err error) {
@@ -80,7 +96,9 @@ func scanDir(path string) (d dirContents, err error) {
 				d.SubDirs = append(d.SubDirs, r.Name())
 			}
 		} else if strings.HasSuffix(n, ".JPG") || strings.HasSuffix(n, ".JPEG") {
-			d.JpgFiles = append(d.JpgFiles, r.Name())
+			d.ImageFiles = append(d.ImageFiles, r.Name())
+		} else if strings.HasSuffix(n, ".TIF") || strings.HasSuffix(n, ".TIFF") {
+			d.ImageFiles = append(d.ImageFiles, r.Name())
 		}
 	}
 	d.Path = path
@@ -107,7 +125,32 @@ func BrowseDirectory(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func serveResizedImage(w http.ResponseWriter, path string, maxDim uint) {
+func resizeImage(origName, newName string, maxDim uint, square bool) error {
+	var args []string
+	if square {
+		args = append(args,
+			"-define", fmt.Sprintf("jpeg:size=%dx%d", maxDim*2, maxDim*2),
+			"-resize", fmt.Sprintf("%dx%d^", maxDim, maxDim),
+			"-gravity", "center",
+			"-extent", fmt.Sprintf("%dx%d^", maxDim, maxDim),
+		)
+	} else {
+		args = append(args,
+			"-define", fmt.Sprintf("jpeg:size=%dx%d", maxDim*2, maxDim*2),
+			"-resize", fmt.Sprintf("%dx%d>", maxDim, maxDim),
+		)
+	}
+	args = append(args, origName, newName)
+	cmd := exec.Command("/usr/bin/convert", args...)
+	err := cmd.Run()
+	if err != nil {
+		fmt.Println(err)
+		return err
+	}
+	return nil
+}
+
+func serveResizedImage(w http.ResponseWriter, r *http.Request, path string, maxDim uint, square bool) {
 	fullPath := gonagallConfig.BaseDir + "/" + path
 	h := sha1.New()
 	if _, err := h.Write([]byte(gonagallConfig.CacheDir + "/" + fullPath + fmt.Sprint(maxDim))); err != nil {
@@ -118,48 +161,19 @@ func serveResizedImage(w http.ResponseWriter, path string, maxDim uint) {
 
 	fmt.Println("Starting to serve", fullPath, "with width", maxDim, "==>", hashPath)
 
-	if _, err := os.Stat(hashPath); err == nil {
-		fmt.Println("Serving existing resized file:", fullPath, "with width", maxDim, "==> hashPath")
-		b, err := ioutil.ReadFile(hashPath)
-		if err != nil {
+	if _, err := os.Stat(hashPath); err != nil {
+		if !os.IsNotExist(err) {
 			http.Error(w, err.Error(), 500)
 			return
 		}
-		w.Write(b)
-		return
-	} else if !os.IsNotExist(err) {
-		http.Error(w, err.Error(), 500)
-		return
+		fmt.Println("Converting file:", fullPath, "with width", maxDim, "==>", hashPath)
+		if square {
+			resizeImage(fullPath, hashPath, maxDim, true)
+		} else {
+			resizeImage(fullPath, hashPath, maxDim, false)
+		}
 	}
-
-	origFile, _ := os.Open(fullPath)
-	origImage, _ := jpeg.Decode(origFile)
-	origFileStat, _ := origFile.Stat()
-	origFile.Close()
-
-	fmt.Println("decoded", fullPath)
-
-	var resized image.Image
-	p := origImage.Bounds().Size()
-	if p.X > p.Y {
-		resized = resize.Resize(maxDim, 0, origImage, resize.NearestNeighbor)
-	} else {
-		resized = resize.Resize(0, maxDim, origImage, resize.NearestNeighbor)
-	}
-	b := new(bytes.Buffer)
-	jpeg.Encode(b, resized, nil)
-	ratio := float64(b.Len()) / float64(origFileStat.Size()) * 100.0
-	fmt.Println("re-encoded", fullPath, "to", hashPath, "size=", b.Len(), ratio)
-	w.Write(b.Bytes())
-
-	// cache the contents
-	cacheFile, err := os.Create(hashPath)
-	defer cacheFile.Close()
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-	b.WriteTo(cacheFile)
+	http.ServeFile(w, r, hashPath)
 }
 
 func relativePath(r *http.Request) string {
@@ -174,12 +188,12 @@ func relativePath(r *http.Request) string {
 
 func ServeThumb(w http.ResponseWriter, r *http.Request) {
 	p := relativePath(r)
-	serveResizedImage(w, p, gonagallConfig.ThumbSize)
+	serveResizedImage(w, r, p, gonagallConfig.ThumbSize, true)
 }
 
 func ServeSmall(w http.ResponseWriter, r *http.Request) {
 	p := relativePath(r)
-	serveResizedImage(w, p, gonagallConfig.ViewSize)
+	serveResizedImage(w, r, p, gonagallConfig.ViewSize, false)
 }
 
 func ServeFull(w http.ResponseWriter, r *http.Request) {

@@ -21,3 +21,8 @@ setting the path for this.
 
 Analogously, individual image files are resized and cached as well.
 
+TODO
+----
+
+- Background service for resizing images
+

@@ -141,7 +141,7 @@ func resizeImage(origName, newName string, maxDim uint, square bool) error {
 		)
 	}
 	args = append(args, origName, newName)
-	cmd := exec.Command("/usr/bin/convert", args...)
+	cmd := exec.Command("convert", args...)
 	err := cmd.Run()
 	if err != nil {
 		fmt.Println(err)

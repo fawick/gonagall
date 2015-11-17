@@ -5,7 +5,6 @@ import (
 	"crypto/sha1"
 	"encoding/json"
 	"fmt"
-	"github.com/gorilla/mux"
 	"html/template"
 	"io/ioutil"
 	"net/http"
@@ -43,7 +42,7 @@ func readConfig() error {
 	s, _ := os.Getwd()
 	fmt.Println("pwd", s)
 	gonagallConfig.BaseDir = "."
-	gonagallConfig.CacheDir = "/tmp"
+	gonagallConfig.CacheDir = "/tmp/gonagall"
 	gonagallConfig.ThumbSize = 100
 	gonagallConfig.ViewSize = 480
 	inFile, err := os.Open(gonagallConfigFile)
@@ -106,7 +105,7 @@ func scanDir(path string) (d dirContents, err error) {
 }
 
 func BrowseDirectory(w http.ResponseWriter, r *http.Request) {
-	upath := mux.Vars(r)["directory"]
+	upath := r.URL.Path
 	t, err := template.ParseFiles("template.browse.html")
 	if err != nil {
 		http.Error(w, err.Error(), 500)
@@ -150,8 +149,8 @@ func resizeImage(origName, newName string, maxDim uint, square bool) error {
 	return nil
 }
 
-func serveResizedImage(w http.ResponseWriter, r *http.Request, path string, maxDim uint, square bool) {
-	fullPath := gonagallConfig.BaseDir + "/" + path
+func serveResizedImage(w http.ResponseWriter, r *http.Request, maxDim uint, square bool) {
+	fullPath := gonagallConfig.BaseDir + "/" + r.URL.Path
 	h := sha1.New()
 	if _, err := h.Write([]byte(gonagallConfig.CacheDir + "/" + fullPath + fmt.Sprint(maxDim))); err != nil {
 		http.Error(w, err.Error(), 500)
@@ -176,77 +175,26 @@ func serveResizedImage(w http.ResponseWriter, r *http.Request, path string, maxD
 	http.ServeFile(w, r, hashPath)
 }
 
-func relativePath(r *http.Request) string {
-	m := mux.Vars(r)
-	var s string
-	if d, ok := m["directory"]; ok {
-		s += d + "/"
-	}
-	s += m["imagefile"]
-	return s
-}
-
-func ServeThumb(w http.ResponseWriter, r *http.Request) {
-	p := relativePath(r)
-	serveResizedImage(w, r, p, gonagallConfig.ThumbSize, true)
-}
-
-func ServeSmall(w http.ResponseWriter, r *http.Request) {
-	p := relativePath(r)
-	serveResizedImage(w, r, p, gonagallConfig.ViewSize, false)
-}
-
-func ServeFull(w http.ResponseWriter, r *http.Request) {
-	p := relativePath(r)
-	http.ServeFile(w, r, gonagallConfig.BaseDir+"/"+p)
-}
-
-func ViewImage(w http.ResponseWriter, r *http.Request) {
-	t, err := template.ParseFiles("template.view.html")
-	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
-	var d struct {
-		Path, File string
-	}
-	m := mux.Vars(r)
-	d.Path = m["directory"]
-	d.File = m["imagefile"]
-
-	err = t.Execute(w, d)
-	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
-}
-
-func Fallback(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("FALLBACK: ", r.URL)
-}
-
-func imageSubrouters(r *mux.Route, f func(http.ResponseWriter, *http.Request)) {
-	s := r.Subrouter()
-	s.HandleFunc("/{imagefile}", f)
-	s.HandleFunc("/{directory:[A-Za-z0-9/\\-_\\., ]+}/{imagefile}", f)
+func setupHandler(prefix string, f http.HandlerFunc) {
+	http.Handle(prefix+"/", http.StripPrefix(prefix, http.HandlerFunc(f)))
 }
 
 func main() {
 	readConfig()
 	os.Mkdir(gonagallConfig.CacheDir, os.ModePerm)
-	r := mux.NewRouter()
-	imageSubrouters(r.PathPrefix("/thumb"), ServeThumb)
-	imageSubrouters(r.PathPrefix("/small"), ServeSmall)
-	imageSubrouters(r.PathPrefix("/original"), ServeFull)
-	imageSubrouters(r.PathPrefix("/view"), ViewImage)
-
-	r.Path("/gallery/{directory:.*}").HandlerFunc(BrowseDirectory)
-
-	r.PathPrefix("/static").Handler(http.StripPrefix("/static", http.FileServer(http.Dir("static"))))
-
+	setupHandler("/gallery", BrowseDirectory)
+	setupHandler("/thumb", func(w http.ResponseWriter, r *http.Request) {
+		serveResizedImage(w, r, gonagallConfig.ThumbSize, true)
+	})
+	setupHandler("/small", func(w http.ResponseWriter, r *http.Request) {
+		serveResizedImage(w, r, gonagallConfig.ViewSize, true)
+	})
+	setupHandler("/original", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, gonagallConfig.BaseDir+"/"+r.URL.Path)
+	})
+	http.Handle("/static/", http.StripPrefix("/static", http.FileServer(http.Dir("static"))))
 	if gonagallConfig.CatchAll {
-		r.NotFoundHandler = http.RedirectHandler("/gallery/", 301)
+		http.Handle("/", http.RedirectHandler("/gallery/", 301))
 	}
-	http.Handle("/", r)
-	http.ListenAndServe(":8781", nil)
+	http.ListenAndServe(":8782", nil)
 }
